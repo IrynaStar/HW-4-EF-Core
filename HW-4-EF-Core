@@ -1,0 +1,165 @@
+using Microsoft.EntityFrameworkCore;
+//using System;
+//using System.Linq;
+using System.Security.Cryptography;
+
+namespace ConsoleApp1
+{
+    class Program
+    {
+        static void Main()
+        {
+            using (var db = new ApplicationContext())
+            {
+                db.Database.EnsureDeleted();
+                db.Database.EnsureCreated();
+
+                // Добавляем пользователей и их настройки
+                SeedDatabase(db);
+
+                // Получаем пользователя с ID = 2 и его настройки
+                GetUserWithSettings(db, 2);
+
+                // Удаляем пользователя с ID = 3
+                DeleteUser(db, 3);
+            }
+        }
+
+        static void SeedDatabase(ApplicationContext db)
+        {
+            var user1 = new User
+            {
+                Username = "user1",
+                PasswordHash = PasswordHelper.HashPassword("password1").Hash,
+                Salt = PasswordHelper.HashPassword("password1").Salt,
+                Settings = new UserSettings { Theme = "Dark", NotificationsEnabled = true }
+            };
+
+            var user2 = new User
+            {
+                Username = "user2",
+                PasswordHash = PasswordHelper.HashPassword("password2").Hash,
+                Salt = PasswordHelper.HashPassword("password2").Salt,
+                Settings = new UserSettings { Theme = "Light", NotificationsEnabled = false }
+            };
+
+            var user3 = new User
+            {
+                Username = "user3",
+                PasswordHash = PasswordHelper.HashPassword("password3").Hash,
+                Salt = PasswordHelper.HashPassword("password3").Salt,
+                Settings = new UserSettings { Theme = "Blue", NotificationsEnabled = true }
+            };
+
+            db.Users.AddRange(user1, user2, user3);
+            db.SaveChanges();
+        }
+
+        static void GetUserWithSettings(ApplicationContext db, int userId)
+        {
+            var user = db.Users
+                         .Include(u => u.Settings)
+                         .SingleOrDefault(u => u.Id == userId);
+
+            if (user != null)
+            {
+                Console.WriteLine($"Username: {user.Username}, Theme: {user.Settings.Theme}, Notifications: {user.Settings.NotificationsEnabled}");
+            }
+            else
+            {
+                Console.WriteLine("User not found.");
+            }
+        }
+
+        static void DeleteUser(ApplicationContext db, int userId)
+        {
+            var user = db.Users.Include(u => u.Settings).SingleOrDefault(u => u.Id == userId);
+            if (user != null)
+            {
+                db.Users.Remove(user);
+                db.SaveChanges();
+                Console.WriteLine($"User with ID {userId} and their settings have been deleted.");
+            }
+            else
+            {
+                Console.WriteLine("User not found.");
+            }
+        }
+    }
+
+    public class User
+    {
+        public int Id { get; set; }
+        public string Username { get; set; } = null!;
+        public string PasswordHash { get; set; } = null!;
+        public string Salt { get; set; } = null!;
+        public UserSettings Settings { get; set; } = null!; // Связь с настройками пользователя
+    }
+
+    public class UserSettings
+    {
+        public int Id { get; set; }
+        public string Theme { get; set; } = null!;
+        public bool NotificationsEnabled { get; set; }
+        public int UserId { get; set; } // Внешний ключ
+        public User User { get; set; } = null!;
+    }
+
+    public class ApplicationContext : DbContext
+    {
+        public DbSet<User> Users { get; set; } = null!;
+        public DbSet<UserSettings> UserSettings { get; set; } = null!;
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            optionsBuilder.UseSqlServer(@"Server=DESKTOP-GVAO16L;Database=UserDb;Trusted_Connection=True;TrustServerCertificate=True;");
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<User>()
+                .HasKey(u => u.Id);
+
+            modelBuilder.Entity<UserSettings>()
+                .HasKey(us => us.Id);
+
+            modelBuilder.Entity<User>()
+                .HasOne(u => u.Settings)
+                .WithOne(us => us.User)
+                .HasForeignKey<UserSettings>(us => us.UserId);
+
+            base.OnModelCreating(modelBuilder);
+        }
+    }
+
+    public static class PasswordHelper
+    {
+        public static (string Hash, string Salt) HashPassword(string password)
+        {
+            using (var rng = new RNGCryptoServiceProvider())
+            {
+                var saltBytes = new byte[16];
+                rng.GetBytes(saltBytes); // Generate a salt
+                var salt = Convert.ToBase64String(saltBytes);
+
+                using (var pbkdf2 = new Rfc2898DeriveBytes(password, saltBytes, 10000))
+                {
+                    var hashBytes = pbkdf2.GetBytes(20);
+                    var hash = Convert.ToBase64String(hashBytes);
+                    return (hash, salt);
+                }
+            }
+        }
+
+        public static bool VerifyPassword(string password, string storedHash, string storedSalt)
+        {
+            var saltBytes = Convert.FromBase64String(storedSalt);
+            using (var pbkdf2 = new Rfc2898DeriveBytes(password, saltBytes, 10000))
+            {
+                var hashBytes = pbkdf2.GetBytes(20);
+                var hash = Convert.ToBase64String(hashBytes);
+                return hash == storedHash;
+            }
+        }
+    }
+}
